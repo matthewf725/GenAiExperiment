@@ -1,0 +1,191 @@
+from keras.preprocessing.text import Tokenizer
+from keras.preprocessing.sequence import pad_sequences
+from keras.models import Sequential
+from keras.layers import LSTM, Dense, Embedding, Flatten, Reshape, Dropout, Activation
+import numpy as np
+import tensorflow as tf
+from scipy.spatial.distance import euclidean
+from tensorflow.keras.utils import to_categorical
+
+def create_nn2_model(input_shape, output_shape):
+    """
+    Create the NN2 model for text prediction based on patterns.
+
+    Parameters:
+    input_shape (tuple): Shape of the input (e.g., number of patterns).
+    output_shape (int): Dimension of the output (e.g., number of predicted text elements).
+
+    Returns:
+    model (Sequential): NN2 model.
+    """
+
+    model = Sequential()
+    model.add(LSTM(128, input_shape=(100, 1)))
+    model.add(Dense(128, activation='relu'))
+
+    model.add(Dense(256, activation='relu'))
+    model.add(LSTM(1000))
+    model.add(Dense(26, activation='softmax'))  # Adjust activation based on the problem
+
+    # Compile the model
+    model.compile(optimizer='adam', loss='mean_squared_error', metrics=['accuracy'])
+
+    return model
+
+def create_nn1_model(input_shape, output_shape):
+    """
+    Create the NN1 model for pattern extraction.
+
+    Parameters:
+    input_shape (tuple): Shape of the input (e.g., number of features).
+    output_shape (int): Dimension of the output (e.g., number of patterns).
+
+    Returns:
+    model (Sequential): NN1 model.
+    """
+
+    model = Sequential()
+    model.add(Embedding(input_dim=input_shape[0], output_dim=128, input_length=input_shape[1], ))
+    model.add(LSTM(128))
+    model.add(Dropout(0.5))
+    model.add(Dense(128, activation='relu'))
+    model.add(Dropout(0.5))
+    model.add(Dense(output_shape[1], activation='linear'))
+
+    # Compile the model
+    model.compile(optimizer='adam', loss='mean_squared_error')
+
+    return model
+
+def preprocess(texts, max_words=10000, max_sequence_length=100):
+    # Create a tokenizer and fit it on the text
+    tokenizer = Tokenizer(num_words=max_words)
+    tokenizer.fit_on_texts(texts)
+    
+    # Convert text to sequences of numbers (tokens)
+    sequences = tokenizer.texts_to_sequences(texts)
+    
+    # Pad sequences to have a consistent length
+    padded_sequences = pad_sequences(sequences, maxlen=1)
+    
+    num_unique_tokens = len(tokenizer.word_index)
+    return padded_sequences, tokenizer, num_unique_tokens
+
+def train_nn1(input_text, expected_patterns, input_shape, output_shape, num_epochs=100):
+    # Preprocess input text (tokenization, etc.)
+    processed_input = input_text
+    
+    # Train NN1 to predict patterns
+    nn1_model = create_nn1_model(input_shape=input_shape, output_shape=output_shape)
+    nn1_model.compile(optimizer='adam', loss='mean_squared_error')
+    nn1_model.fit(processed_input, expected_patterns, epochs=num_epochs)
+    
+    return nn1_model
+
+def extract_patterns(nn1_model, input_text):
+    # Preprocess input text (tokenization, etc.)
+    processed_input = input_text
+    
+    # Use NN1 to predict patterns
+    predicted_patterns = nn1_model.predict(processed_input)
+    
+    return predicted_patterns
+
+def train_nn2(input_patterns, expected_text, input_shape, output_shape, num_epochs=100):
+    # Train NN2 to predict text based on patterns
+    nn2_model = create_nn2_model(input_shape=input_shape, output_shape=output_shape)
+    nn2_model.compile(optimizer='adam', loss='categorical_crossentropy')
+
+    nn2_model.fit(input_patterns, expected_text, epochs=num_epochs, batch_size=32)
+    
+    return nn2_model
+
+def predict_text(nn2_model, input_patterns):
+    # Use NN2 to predict text
+    predicted_text = nn2_model.predict(input_patterns)
+    
+    return predicted_text
+
+def reverse_preprocess(sequences, tokenizer):
+    # Reverse padding to get original sequences
+
+    # Convert sequences of numbers back to text
+    reversed_texts = tokenizer.sequences_to_texts(sequences)
+
+    return reversed_texts
+
+def unpad_sequences(padded_sequences):
+    # Remove padding (zeros) from sequences
+    unpad_sequences = []
+    for sequence in padded_sequences:
+        unpad_sequence = [token for token in sequence if token != 0]
+        unpad_sequences.append(unpad_sequence)
+    return unpad_sequences
+
+def scale_to_integers(data, comparison_data):
+    max_comparison_value = np.max(comparison_data)
+    scaling_factor = max_comparison_value / np.max(data)
+    scaled_data = np.round(data * scaling_factor).astype(int)
+    return scaled_data
+
+def break_string_into_lists(input_text):
+    # Convert the string to a list of characters
+    char_list = list(input_text)
+    return char_list
+
+def trainModels(input_text):
+
+
+    input_text = break_string_into_lists(input_text)
+    #input_text = break_string_into_lists(input_text])
+    processedinput, tokenizer, numTokens = preprocess(input_text)
+
+    expected_patterns = processedinput
+    mask = processedinput != 0
+    processedinput = np.ma.masked_array(processedinput, mask=~mask)
+    #processedoutput = np.ma.masked_array(processedinput, mask=~mask)
+
+
+    # Define input and output shapes for the models
+    input_shape_nn1 = (10000, 100)  # Adjust as needed
+
+    output_shape_nn1 = [processedinput.shape[0], 100]
+
+    processedinput = processedinput[:-1]
+    expected_patterns = expected_patterns[1:, :]
+    nn1_model = train_nn1(processedinput, expected_patterns, input_shape_nn1, output_shape_nn1)
+    # Extract patterns using NN1
+
+    patterns = extract_patterns(nn1_model, processedinput)
+
+    offset_input_data = patterns
+    offset_output_data = expected_patterns
+
+    model = Sequential([
+        LSTM(128, input_shape=(100, 1)),  # LSTM layer with 128 units
+        Dense(27),  # Output layer
+        Activation('softmax')
+    ])
+
+    model.compile(loss='categorical_crossentropy', optimizer='adam')
+    y_train_one_hot = to_categorical(offset_output_data, num_classes=27)
+    model.fit(offset_input_data, y_train_one_hot, epochs=100, batch_size=32)
+    return nn1_model, model, tokenizer
+
+def getPatterns(nn1_model, prompt):
+    input_text = break_string_into_lists(prompt)
+    #input_text = break_string_into_lists(input_text])
+    processedinput, tokenizer, numTokens = preprocess(input_text)
+
+    expected_patterns = processedinput
+    mask = processedinput != 0
+    processedinput = np.ma.masked_array(processedinput, mask=~mask)
+input_text = 'abcdefghijklmnopqrstuvwxyz'
+nn1_model, model, tokenizer = trainModels(input_text)
+prompt = 'c'
+patterns = getPatterns(nn1_model, prompt)
+new_output = model.predict(patterns[24].reshape((1, 100)))
+new_output = np.argmax(new_output, axis=1)
+print(reverse_preprocess([new_output], tokenizer))
+
+#TO DO: Remake processer to encode in hexadecimal so i dont have to get doing this tokenizer idiocy
